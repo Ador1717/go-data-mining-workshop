@@ -302,10 +302,19 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 	}
 	
 	// Save plot
+	xFeatureName := strings.ReplaceAll(strings.ReplaceAll(featureNames[xFeature], " ", "_"), "(", "")
+	xFeatureName = strings.ReplaceAll(xFeatureName, ")", "")
+	yFeatureName := strings.ReplaceAll(strings.ReplaceAll(featureNames[yFeature], " ", "_"), "(", "")
+	yFeatureName = strings.ReplaceAll(yFeatureName, ")", "")
+	
 	filename := fmt.Sprintf("%s_clustering_%s_vs_%s.png", 
 		strings.ToLower(strings.ReplaceAll(algorithmName, " ", "_")),
-		strings.ToLower(strings.ReplaceAll(featureNames[xFeature], " ", "_")),
-		strings.ToLower(strings.ReplaceAll(featureNames[yFeature], " ", "_")))
+		strings.ToLower(xFeatureName),
+		strings.ToLower(yFeatureName))
+	
+	// Clean up filename further
+	filename = strings.ReplaceAll(filename, "/", "_")
+	filename = strings.ReplaceAll(filename, "\\", "_")
 	
 	if err := p.Save(10*vg.Inch, 8*vg.Inch, filename); err != nil {
 		log.Printf("Error saving plot: %v", err)
