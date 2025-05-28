@@ -3,30 +3,18 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
-	"image/color"
 	"log"
-	"math"
-	"math/rand"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
-	"gonum.org/v1/gonum/mat"
-	"gonum.org/v1/plot"
-	"gonum.org/v1/plot/plotter"
-	"gonum.org/v1/plot/vg"
-	"gonum.org/v1/plot/vg/draw"
+	"github.com/sjwhitworth/golearn/base"
+	"github.com/sjwhitworth/golearn/clustering"
+	"github.com/sjwhitworth/golearn/metrics/pairwise"
 )
 
-// CSVData represents parsed CSV data
-type CSVData struct {
-	Headers []string
-	Rows    [][]string
-}
-
 // loadCSV loads a CSV file and returns the parsed data
-func loadCSV(filename string) (*CSVData, error) {
+func loadCSV(filename string) ([][]string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file %s: %v", filename, err)
@@ -43,37 +31,23 @@ func loadCSV(filename string) (*CSVData, error) {
 		return nil, fmt.Errorf("empty CSV file")
 	}
 
-	return &CSVData{
-		Headers: records[0],
-		Rows:    records[1:],
-	}, nil
+	return records[1:], nil // Skip header
 }
 
-// convertToFloat64 converts string data to float64, handling missing values
-func convertToFloat64(data [][]string, skipColumns []int) ([][]float64, error) {
+// convertToFloat64 converts string data to float64
+func convertToFloat64(data [][]string) ([][]float64, error) {
 	result := make([][]float64, 0, len(data))
 	
 	for _, row := range data {
 		if len(strings.TrimSpace(strings.Join(row, ""))) == 0 {
-			continue // Skip empty rows
+			continue
 		}
 		
-		floatRow := make([]float64, 0, len(row)-len(skipColumns))
-		for i, val := range row {
-			// Skip specified columns
-			skip := false
-			for _, skipCol := range skipColumns {
-				if i == skipCol {
-					skip = true
-					break
-				}
-			}
-			if skip {
-				continue
-			}
-			
+		floatRow := make([]float64, 0, len(row)-1) // Skip first column (zone_id)
+		for i := 1; i < len(row); i++ { // Start from index 1 to skip zone_id
+			val := row[i]
 			if strings.TrimSpace(val) == "" {
-				continue // Skip empty values
+				continue
 			}
 			
 			f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
@@ -91,336 +65,289 @@ func convertToFloat64(data [][]string, skipColumns []int) ([][]float64, error) {
 	return result, nil
 }
 
-// K-means clustering using gonum
-func performKMeansGonum(data [][]float64, k int) ([]int, [][]float64, error) {
-	if len(data) == 0 || len(data[0]) == 0 {
-		return nil, nil, fmt.Errorf("empty data")
-	}
-
-	n := len(data)
-	d := len(data[0])
+// createDataGrid creates a GoLearn FixedDataGrid from float64 data
+func createDataGrid(data [][]float64) base.FixedDataGrid {
+	cols := len(data[0])
 	
-	// Convert to matrix
-	dataMatrix := mat.NewDense(n, d, nil)
-	for i, row := range data {
-		for j, val := range row {
-			dataMatrix.Set(i, j, val)
-		}
+	// Create attributes
+	attrs := make([]base.Attribute, cols)
+	featureNames := []string{"Avg_Speed", "Air_Quality", "Noise_Level", "Public_Transport"}
+	for i := 0; i < cols; i++ {
+		attrs[i] = base.NewFloatAttribute(featureNames[i])
 	}
-
-	// Initialize centroids randomly
-	rand.Seed(time.Now().UnixNano())
-	centroids := mat.NewDense(k, d, nil)
-	for i := 0; i < k; i++ {
-		randomIdx := rand.Intn(n)
-		for j := 0; j < d; j++ {
-			centroids.Set(i, j, dataMatrix.At(randomIdx, j))
-		}
-	}
-
-	assignments := make([]int, n)
-	maxIters := 100
 	
-	for iter := 0; iter < maxIters; iter++ {
-		// Assign points to nearest centroids
-		changed := false
-		for i := 0; i < n; i++ {
-			minDist := math.Inf(1)
-			newAssignment := 0
-			
-			for c := 0; c < k; c++ {
-				dist := 0.0
-				for j := 0; j < d; j++ {
-					diff := dataMatrix.At(i, j) - centroids.At(c, j)
-					dist += diff * diff
-				}
-				dist = math.Sqrt(dist)
-				
-				if dist < minDist {
-					minDist = dist
-					newAssignment = c
-				}
-			}
-			
-			if assignments[i] != newAssignment {
-				changed = true
-				assignments[i] = newAssignment
-			}
-		}
-		
-		if !changed {
-			fmt.Printf("K-means converged after %d iterations\n", iter+1)
-			break
-		}
-		
-		// Update centroids
-		clusterCounts := make([]int, k)
-		newCentroids := mat.NewDense(k, d, nil)
-		
-		for i := 0; i < n; i++ {
-			cluster := assignments[i]
-			clusterCounts[cluster]++
-			for j := 0; j < d; j++ {
-				newCentroids.Set(cluster, j, newCentroids.At(cluster, j)+dataMatrix.At(i, j))
-			}
-		}
-		
-		for c := 0; c < k; c++ {
-			if clusterCounts[c] > 0 {
-				for j := 0; j < d; j++ {
-					newCentroids.Set(c, j, newCentroids.At(c, j)/float64(clusterCounts[c]))
-				}
-			}
-		}
-		
-		centroids = newCentroids
+	// Create instances
+	instances := base.NewDenseInstances()
+	
+	// Add attributes
+	for _, attr := range attrs {
+		instances.AddAttribute(attr)
 	}
-
-	// Convert centroids back to slice
-	centroidSlices := make([][]float64, k)
-	for i := 0; i < k; i++ {
-		centroidSlices[i] = make([]float64, d)
-		for j := 0; j < d; j++ {
-			centroidSlices[i][j] = centroids.At(i, j)
+	
+	// Extend to accommodate data
+	instances.Extend(len(data))
+	
+	// Add data
+	for rowIdx, row := range data {
+		for colIdx, value := range row {
+			attrSpec, err := instances.GetAttribute(attrs[colIdx])
+			if err != nil {
+				log.Printf("Error getting attribute spec: %v", err)
+				continue
+			}
+			instances.Set(attrSpec, rowIdx, base.PackFloatToBytes(value))
 		}
 	}
-
-	return assignments, centroidSlices, nil
+	
+	return instances
 }
 
-// calculateWithinClusterSumOfSquares calculates WCSS for cluster evaluation
-func calculateWithinClusterSumOfSquares(data [][]float64, assignments []int, centroids [][]float64) float64 {
-	wcss := 0.0
-	for i, point := range data {
-		cluster := assignments[i]
-		if cluster >= 0 && cluster < len(centroids) {
-			for j, val := range point {
-				diff := val - centroids[cluster][j]
-				wcss += diff * diff
+// performDBSCAN performs DBSCAN clustering using GoLearn
+func performDBSCAN(data [][]float64) (clustering.ClusterMap, error) {
+	fmt.Println("\n🔍 Performing DBSCAN Clustering...")
+	
+	// Create data grid
+	dataGrid := createDataGrid(data)
+	
+	// Set up DBSCAN parameters
+	params := clustering.DBSCANParameters{
+		ClusterParameters: clustering.ClusterParameters{
+			Attributes: dataGrid.AllAttributes(),
+			Metric:     pairwise.NewEuclidean(),
+		},
+		Eps:      15.0, // Maximum distance for neighborhood
+		MinCount: 5,    // Minimum points to form a cluster
+	}
+	
+	// Perform DBSCAN clustering
+	clusterMap, err := clustering.DBSCAN(dataGrid, params)
+	if err != nil {
+		return nil, fmt.Errorf("DBSCAN failed: %v", err)
+	}
+	
+	return clusterMap, nil
+}
+
+// performExpectationMaximization performs EM clustering using GoLearn
+func performExpectationMaximization(data [][]float64, nComponents int) (clustering.ClusterMap, error) {
+	fmt.Println("\n🔍 Performing Expectation Maximization Clustering...")
+	
+	// Create data grid
+	dataGrid := createDataGrid(data)
+	
+	// Create EM clusterer
+	em, err := clustering.NewExpectationMaximization(nComponents)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create EM clusterer: %v", err)
+	}
+	
+	// Fit the model
+	err = em.Fit(dataGrid)
+	if err != nil {
+		return nil, fmt.Errorf("EM fit failed: %v", err)
+	}
+	
+	// Predict clusters
+	clusterMap, err := em.Predict(dataGrid)
+	if err != nil {
+		return nil, fmt.Errorf("EM predict failed: %v", err)
+	}
+	
+	return clusterMap, nil
+}
+
+// convertClusterMapToAssignments converts GoLearn ClusterMap to simple assignments array
+func convertClusterMapToAssignments(clusterMap clustering.ClusterMap, dataSize int) []int {
+	assignments := make([]int, dataSize)
+	
+	// Initialize all points as noise (-1)
+	for i := range assignments {
+		assignments[i] = -1
+	}
+	
+	// Assign cluster IDs
+	for clusterID, pointIndices := range clusterMap {
+		for _, pointIndex := range pointIndices {
+			if pointIndex < dataSize {
+				assignments[pointIndex] = clusterID
 			}
 		}
 	}
-	return wcss
+	
+	return assignments
 }
 
-// performClustering performs clustering on zones data using gonum
+// calculateClusterCentroids calculates centroids for each cluster
+func calculateClusterCentroids(data [][]float64, assignments []int) map[int][]float64 {
+	centroids := make(map[int][]float64)
+	counts := make(map[int]int)
+	
+	// Initialize centroids
+	for _, clusterID := range assignments {
+		if clusterID >= 0 {
+			if _, exists := centroids[clusterID]; !exists {
+				centroids[clusterID] = make([]float64, len(data[0]))
+				counts[clusterID] = 0
+			}
+		}
+	}
+	
+	// Sum up points in each cluster
+	for i, clusterID := range assignments {
+		if clusterID >= 0 {
+			for j, val := range data[i] {
+				centroids[clusterID][j] += val
+			}
+			counts[clusterID]++
+		}
+	}
+	
+	// Calculate averages
+	for clusterID := range centroids {
+		if counts[clusterID] > 0 {
+			for j := range centroids[clusterID] {
+				centroids[clusterID][j] /= float64(counts[clusterID])
+			}
+		}
+	}
+	
+	return centroids
+}
+
+// performClustering performs clustering analysis using GoLearn
 func performClustering() {
-	fmt.Println("=== CLUSTERING: Urban Zones Analysis (Custom K-Means with Gonum) ===")
+	fmt.Println("=== CLUSTERING: Urban Zones Analysis (GoLearn) ===")
 	
-	// Load zones clustering data
+	// Load data
 	csvData, err := loadCSV("../../datasets/zones_clustering.csv")
 	if err != nil {
-		log.Fatalf("Clustering: Error loading CSV: %v", err)
+		log.Fatalf("Error loading CSV: %v", err)
 	}
 
-	fmt.Printf("Loaded %d records with features: %v\n", len(csvData.Rows), csvData.Headers)
+	fmt.Printf("Loaded %d records\n", len(csvData))
 
-	// Convert to float64, skip the area column (first column)
-	data, err := convertToFloat64(csvData.Rows, []int{0})
+	// Convert to float64
+	data, err := convertToFloat64(csvData)
 	if err != nil {
-		log.Fatalf("Clustering: Error converting data: %v", err)
+		log.Fatalf("Error converting data: %v", err)
 	}
 
 	fmt.Printf("Processed %d valid records with %d features\n", len(data), len(data[0]))
 
-	// Test different numbers of clusters using elbow method
-	fmt.Println("\n🔍 Testing different numbers of clusters (Elbow Method):")
-	maxK := 8
-	wcssValues := make([]float64, maxK)
-	
-	for k := 1; k <= maxK; k++ {
-		assignments, centroids, err := performKMeansGonum(data, k)
-		if err != nil {
-			log.Printf("Error with K=%d: %v", k, err)
-			continue
-		}
-		wcss := calculateWithinClusterSumOfSquares(data, assignments, centroids)
-		wcssValues[k-1] = wcss
-		fmt.Printf("K=%d: WCSS = %.2f\n", k, wcss)
-	}
-
-	// Perform K-means clustering with optimal K=3
-	k := 3
-	assignments, centroids, err := performKMeansGonum(data, k)
+	// Perform DBSCAN clustering
+	dbscanClusters, err := performDBSCAN(data)
 	if err != nil {
-		log.Fatalf("Clustering: K-means failed: %v", err)
+		log.Printf("DBSCAN failed: %v", err)
+	} else {
+		fmt.Printf("DBSCAN found %d clusters\n", len(dbscanClusters))
+		
+		// Convert to assignments and calculate centroids
+		dbscanAssignments := convertClusterMapToAssignments(dbscanClusters, len(data))
+		dbscanCentroids := calculateClusterCentroids(data, dbscanAssignments)
+		
+		// Print cluster statistics
+		printClusterStatistics("DBSCAN", dbscanAssignments, dbscanCentroids, data)
 	}
 
-	fmt.Printf("\nK-Means clustering complete with %d clusters\n", k)
-
-	// Create visualization: Average Speed vs Air Quality colored by cluster
-	p := plot.New()
-	p.Title.Text = "Urban Zones Clustering: Speed vs Air Quality (Custom K-Means)"
-	p.X.Label.Text = "Average Speed (km/h)"
-	p.Y.Label.Text = "Air Quality Index"
-
-	clusterPoints := make([]plotter.XYs, k)
-	for i := range clusterPoints {
-		clusterPoints[i] = make(plotter.XYs, 0)
-	}
-
-	// Extract cluster assignments and create plot points
-	for i, row := range data {
-		if i < len(assignments) {
-			clusterID := assignments[i]
-			xy := plotter.XY{X: row[0], Y: row[1]} // avg_speed vs air_quality
-			if clusterID >= 0 && clusterID < k {
-				clusterPoints[clusterID] = append(clusterPoints[clusterID], xy)
-			}
-		}
-	}
-
-	colors := []color.Color{
-		color.RGBA{R: 255, G: 0, B: 0, A: 255},   // Red
-		color.RGBA{R: 0, G: 255, B: 0, A: 255},   // Green
-		color.RGBA{R: 0, G: 0, B: 255, A: 255},   // Blue
-		color.RGBA{R: 255, G: 255, B: 0, A: 255}, // Yellow
-		color.RGBA{R: 255, G: 0, B: 255, A: 255}, // Magenta
-	}
-
-	for i := 0; i < k; i++ {
-		if len(clusterPoints[i]) > 0 {
-			s, err := plotter.NewScatter(clusterPoints[i])
-			if err != nil {
-				log.Fatalf("Clustering: Error creating scatter plot: %v", err)
-			}
-			s.GlyphStyle.Color = colors[i%len(colors)]
-			s.GlyphStyle.Radius = vg.Points(4)
-			p.Add(s)
-			p.Legend.Add(fmt.Sprintf("Cluster %d (%d zones)", i, len(clusterPoints[i])), s)
-		}
-	}
-
-	// Add centroids to the plot
-	centroidPoints := make(plotter.XYs, k)
-	for i := 0; i < k; i++ {
-		centroidPoints[i] = plotter.XY{X: centroids[i][0], Y: centroids[i][1]}
-	}
-	
-	centroidScatter, err := plotter.NewScatter(centroidPoints)
+	// Perform Expectation Maximization clustering
+	emClusters, err := performExpectationMaximization(data, 3)
 	if err != nil {
-		log.Fatalf("Clustering: Error creating centroid scatter plot: %v", err)
+		log.Printf("Expectation Maximization failed: %v", err)
+	} else {
+		fmt.Printf("Expectation Maximization found %d clusters\n", len(emClusters))
+		
+		// Convert to assignments and calculate centroids
+		emAssignments := convertClusterMapToAssignments(emClusters, len(data))
+		emCentroids := calculateClusterCentroids(data, emAssignments)
+		
+		// Print cluster statistics
+		printClusterStatistics("Expectation Maximization", emAssignments, emCentroids, data)
 	}
-	centroidScatter.GlyphStyle.Color = color.RGBA{R: 0, G: 0, B: 0, A: 255} // Black
-	centroidScatter.GlyphStyle.Radius = vg.Points(8)
-	centroidScatter.GlyphStyle.Shape = draw.CrossGlyph{}
-	p.Add(centroidScatter)
-	p.Legend.Add("Centroids", centroidScatter)
+}
 
-	if err := p.Save(6*vg.Inch, 4*vg.Inch, "clustering_zones_analysis.png"); err != nil {
-		log.Fatalf("Clustering: Error saving plot: %v", err)
-	}
-	fmt.Println("Clustering plot saved to clustering_zones_analysis.png")
-
-	// Create second visualization: Noise Level vs Public Transport Use
-	p2 := plot.New()
-	p2.Title.Text = "Urban Zones Clustering: Noise vs Public Transport"
-	p2.X.Label.Text = "Noise Level (dB)"
-	p2.Y.Label.Text = "Public Transport Use"
-
-	clusterPoints2 := make([]plotter.XYs, k)
-	for i := range clusterPoints2 {
-		clusterPoints2[i] = make(plotter.XYs, 0)
-	}
-
-	for i, row := range data {
-		if i < len(assignments) {
-			clusterID := assignments[i]
-			xy := plotter.XY{X: row[2], Y: row[3]}
-			if clusterID >= 0 && clusterID < k {
-				clusterPoints2[clusterID] = append(clusterPoints2[clusterID], xy)
-			}
-		}
-	}
-
-	for i := 0; i < k; i++ {
-		if len(clusterPoints2[i]) > 0 {
-			s, err := plotter.NewScatter(clusterPoints2[i])
-			if err != nil {
-				log.Fatalf("Clustering: Error creating second scatter plot: %v", err)
-			}
-			s.GlyphStyle.Color = colors[i%len(colors)]
-			s.GlyphStyle.Radius = vg.Points(4)
-			p2.Add(s)
-			p2.Legend.Add(fmt.Sprintf("Cluster %d", i), s)
-		}
-	}
-
-	if err := p2.Save(6*vg.Inch, 4*vg.Inch, "clustering_noise_transport.png"); err != nil {
-		log.Fatalf("Clustering: Error saving second plot: %v", err)
-	}
-	fmt.Println("Additional plot saved to clustering_noise_transport.png")
-	
-	// Print detailed cluster statistics
-	fmt.Println("\n📊 Detailed Cluster Analysis:")
+// printClusterStatistics prints detailed statistics for each cluster
+func printClusterStatistics(algorithmName string, assignments []int, centroids map[int][]float64, data [][]float64) {
+	fmt.Printf("\n📊 %s Cluster Analysis:\n", algorithmName)
 	featureNames := []string{"Avg Speed (km/h)", "Air Quality Index", "Noise Level (dB)", "Public Transport Use"}
 	
-	for i := 0; i < k; i++ {
-		fmt.Printf("\n🏙️  Cluster %d (%d zones):\n", i, len(clusterPoints[i]))
+	// Count points in each cluster
+	clusterCounts := make(map[int]int)
+	for _, clusterID := range assignments {
+		if clusterID >= 0 {
+			clusterCounts[clusterID]++
+		}
+	}
+	
+	// Count noise points (cluster ID = -1)
+	noiseCount := 0
+	for _, clusterID := range assignments {
+		if clusterID == -1 {
+			noiseCount++
+		}
+	}
+	
+	if noiseCount > 0 {
+		fmt.Printf("   🔸 Noise points: %d\n", noiseCount)
+	}
+	
+	for clusterID, centroid := range centroids {
+		count := clusterCounts[clusterID]
+		fmt.Printf("\n🏙️  Cluster %d (%d zones):\n", clusterID, count)
 		fmt.Printf("   Centroid: [%.2f, %.2f, %.2f, %.2f]\n", 
-			centroids[i][0], centroids[i][1], centroids[i][2], centroids[i][3])
+			centroid[0], centroid[1], centroid[2], centroid[3])
 		
-		// Calculate cluster characteristics
-		if len(clusterPoints[i]) > 0 {
-			// Find points in this cluster and calculate statistics
-			var clusterData [][]float64
-			for j, row := range data {
-				if j < len(assignments) && assignments[j] == i {
-					clusterData = append(clusterData, row)
-				}
+		// Calculate detailed statistics for this cluster
+		var clusterData [][]float64
+		for i, assignedCluster := range assignments {
+			if assignedCluster == clusterID {
+				clusterData = append(clusterData, data[i])
 			}
-			
-			if len(clusterData) > 0 {
-				// Calculate mean, min, max for each feature
-				for f := 0; f < len(featureNames); f++ {
-					var values []float64
-					for _, point := range clusterData {
-						values = append(values, point[f])
-					}
-					
-					sum := 0.0
-					min, max := values[0], values[0]
-					for _, v := range values {
-						sum += v
-						if v < min {
-							min = v
-						}
-						if v > max {
-							max = v
-						}
-					}
-					mean := sum / float64(len(values))
-					
-					fmt.Printf("   %s: Mean=%.2f, Range=[%.2f, %.2f]\n", 
-						featureNames[f], mean, min, max)
+		}
+		
+		if len(clusterData) > 0 {
+			for f := 0; f < len(featureNames); f++ {
+				var values []float64
+				for _, point := range clusterData {
+					values = append(values, point[f])
 				}
+				
+				sum := 0.0
+				min, max := values[0], values[0]
+				for _, v := range values {
+					sum += v
+					if v < min {
+						min = v
+					}
+					if v > max {
+						max = v
+					}
+				}
+				mean := sum / float64(len(values))
+				
+				fmt.Printf("   %s: Mean=%.2f, Range=[%.2f, %.2f]\n", 
+					featureNames[f], mean, min, max)
 			}
 		}
 	}
-
-	// Calculate and display clustering quality metrics
-	wcss := calculateWithinClusterSumOfSquares(data, assignments, centroids)
-	fmt.Printf("\n📈 Clustering Quality Metrics:\n")
-	fmt.Printf("   Within-Cluster Sum of Squares (WCSS): %.2f\n", wcss)
+	
+	fmt.Printf("\n📈 %s Quality Metrics:\n", algorithmName)
 	fmt.Printf("   Total data points: %d\n", len(data))
-	fmt.Printf("   Number of clusters: %d\n", k)
-	fmt.Printf("   Average points per cluster: %.1f\n", float64(len(data))/float64(k))
+	fmt.Printf("   Number of clusters: %d\n", len(centroids))
+	fmt.Printf("   Noise points: %d\n", noiseCount)
+	if len(centroids) > 0 {
+		fmt.Printf("   Average points per cluster: %.1f\n", float64(len(data)-noiseCount)/float64(len(centroids)))
+	}
 }
 
 func main() {
 	fmt.Println("🏙️  Urban Zones Clustering Exercise")
 	fmt.Println("===================================")
-	fmt.Println("Using Custom K-Means with Gonum Matrix Operations")
+	fmt.Println("Using GoLearn Clustering Algorithms")
 	fmt.Println()
 
 	performClustering()
 
 	fmt.Println("\n✅ Clustering Exercise Complete!")
-	fmt.Println("📊 Generated visualizations:")
-	fmt.Println("  • clustering_zones_analysis.png - Speed vs Air Quality")
-	fmt.Println("  • clustering_noise_transport.png - Noise vs Public Transport")
-	fmt.Println()
-	fmt.Println("💡 Algorithm: K-Means Clustering")
-	fmt.Println("🔧 Matrix Operations: Gonum")
-	fmt.Println("📈 Visualization: Gonum Plot")
+	fmt.Println("💡 Algorithms: DBSCAN & Expectation Maximization")
+	fmt.Println("🔧 Implementation: GoLearn Machine Learning Library")
 } 

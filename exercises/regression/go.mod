@@ -2,7 +2,10 @@ module regression-exercise
 
 go 1.24.2
 
-require gonum.org/v1/plot v0.16.0
+require (
+	gonum.org/v1/gonum v0.16.0
+	gonum.org/v1/plot v0.16.0
+)
 
 require (
 	codeberg.org/go-fonts/liberation v0.5.0 // indirect
