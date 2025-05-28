@@ -4,6 +4,7 @@ go 1.24.2
 
 require (
 	github.com/sjwhitworth/golearn v0.0.0-20221228163002-74ae077eafb2
+	gonum.org/v1/plot v0.16.0
 )
 
 require (
