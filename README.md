@@ -1,1 +1,0 @@
-# go-data-mining-workshop
