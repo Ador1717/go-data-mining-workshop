@@ -6,7 +6,9 @@ import (
     "os"
     "strings"
 
-    "go-datamining-workshop/exercises"
+    "go-datamining-workshop/exercises/regression"
+    "go-datamining-workshop/exercises/classification"
+    "go-datamining-workshop/exercises/clustering"
 )
 
 func main() {
@@ -24,11 +26,11 @@ func main() {
 
     switch choice {
     case "1":
-        exercises.RunRegression()
+        regression.Run()
     case "2":
-        exercises.RunClassification()
+        classification.Run()
     case "3":
-        exercises.RunClustering()
+        clustering.Run()
     default:
         fmt.Println("Invalid choice")
     }
