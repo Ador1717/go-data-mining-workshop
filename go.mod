@@ -1,5 +1,5 @@
-module go-data-mining-workshop
+module go-datamining-workshop
 
-go 1.24.2
+go 1.21
 
-require gonum.org/v1/gonum v0.16.0
+require github.com/go-echarts/go-echarts/v2 v2.5.4 // indirect
