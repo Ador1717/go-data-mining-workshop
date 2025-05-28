@@ -8,7 +8,7 @@ import (
 
 func main() {
     // Load dataset
-    rawData, err := base.ParseCSVToInstances("data/smartcity_city_zones.csv", true)
+    rawData, err := base.ParseCSVToInstances("datasets/zone_clustering.csv", true)
     if err != nil {
         panic(err)
     }
