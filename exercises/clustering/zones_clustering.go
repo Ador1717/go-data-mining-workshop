@@ -323,20 +323,91 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 	}
 }
 
-// createMultiFeaturePlots creates multiple plots for different feature combinations
+// createMultiFeaturePlots creates a limited number of plots for key feature combinations
 func createMultiFeaturePlots(data [][]float64, assignments []int, centroids map[int][]float64, algorithmName string) {
 	featureNames := []string{"Avg Speed (km/h)", "Air Quality Index", "Noise Level (dB)", "Public Transport Use"}
 	
-	// Create plots for interesting feature combinations
+	// Create plots for only the most interesting feature combinations
 	plotCombinations := [][]int{
-		{0, 1}, // Avg Speed vs Air Quality
-		{1, 2}, // Air Quality vs Noise Level
-		{0, 3}, // Avg Speed vs Public Transport
-		{2, 3}, // Noise Level vs Public Transport
+		{0, 1}, // Avg Speed vs Air Quality - shows traffic vs pollution relationship
+		{1, 3}, // Air Quality vs Public Transport - shows pollution vs transport usage
 	}
 	
 	for _, combo := range plotCombinations {
 		createClusterPlot(data, assignments, centroids, algorithmName, combo[0], combo[1], featureNames)
+	}
+}
+
+// explainClusters provides meaningful interpretations of what each cluster represents
+func explainClusters(algorithmName string, assignments []int, centroids map[int][]float64, data [][]float64) {
+	fmt.Printf("\n🏙️ %s Cluster Interpretation:\n", algorithmName)
+	
+	for clusterID, centroid := range centroids {
+		// Count points in this cluster
+		count := 0
+		for _, assignedCluster := range assignments {
+			if assignedCluster == clusterID {
+				count++
+			}
+		}
+		
+		// Interpret cluster characteristics based on centroid values
+		avgSpeed := centroid[0]
+		airQuality := centroid[1]
+		noiseLevel := centroid[2]
+		publicTransport := centroid[3]
+		
+		var clusterType string
+		var description string
+		
+		// Classify cluster based on characteristics
+		if publicTransport > 60 {
+			clusterType = "🚌 Transit-Heavy Zone"
+			description = "High public transport usage, typically urban centers with good connectivity"
+		} else if publicTransport < 30 {
+			clusterType = "🚗 Car-Dependent Zone"
+			description = "Low public transport usage, likely suburban or residential areas"
+		} else {
+			clusterType = "🏙️ Mixed Transport Zone"
+			description = "Moderate public transport usage, balanced urban areas"
+		}
+		
+		// Add air quality context
+		if airQuality > 80 {
+			description += " with poor air quality"
+		} else if airQuality < 60 {
+			description += " with good air quality"
+		} else {
+			description += " with moderate air quality"
+		}
+		
+		// Add traffic context
+		if avgSpeed > 35 {
+			description += " and fast-moving traffic"
+		} else if avgSpeed < 25 {
+			description += " and slow-moving traffic"
+		} else {
+			description += " and moderate traffic flow"
+		}
+		
+		fmt.Printf("\n   Cluster %d (%d zones): %s\n", clusterID, count, clusterType)
+		fmt.Printf("   📝 %s\n", description)
+		fmt.Printf("   📊 Key metrics: Speed=%.1f km/h, Air Quality=%.1f, Noise=%.1f dB, Transit=%.1f%%\n", 
+			avgSpeed, airQuality, noiseLevel, publicTransport)
+	}
+	
+	// Explain noise points for DBSCAN
+	noiseCount := 0
+	for _, clusterID := range assignments {
+		if clusterID == -1 {
+			noiseCount++
+		}
+	}
+	
+	if noiseCount > 0 {
+		fmt.Printf("\n   🔸 Noise Points (%d zones): Outlier zones with unique characteristics\n", noiseCount)
+		fmt.Printf("   📝 These zones don't fit typical patterns - could be special districts,\n")
+		fmt.Printf("       industrial areas, or zones with unusual traffic/transport combinations\n")
 	}
 }
 
@@ -374,6 +445,9 @@ func performClustering() {
 		// Print cluster statistics
 		printClusterStatistics("DBSCAN", dbscanAssignments, dbscanCentroids, data)
 		
+		// Explain what clusters represent
+		explainClusters("DBSCAN", dbscanAssignments, dbscanCentroids, data)
+		
 		// Create plots
 		createMultiFeaturePlots(data, dbscanAssignments, dbscanCentroids, "DBSCAN")
 	}
@@ -391,6 +465,9 @@ func performClustering() {
 		
 		// Print cluster statistics
 		printClusterStatistics("Expectation Maximization", emAssignments, emCentroids, data)
+		
+		// Explain what clusters represent
+		explainClusters("Expectation Maximization", emAssignments, emCentroids, data)
 		
 		// Create plots
 		createMultiFeaturePlots(data, emAssignments, emCentroids, "Expectation Maximization")
