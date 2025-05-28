@@ -1,42 +1,38 @@
 package main
 
 import (
+    "encoding/csv"
     "fmt"
-    "github.com/sjwhitworth/golearn/base"
-    "github.com/sjwhitworth/golearn/ensemble"
-    "github.com/sjwhitworth/golearn/evaluation"
+    "log"
+    "os"
 )
 
 func main() {
-    // Load dataset
-    rawData, err := base.ParseCSVToInstances("data/smartcity_sleep_types.csv", true)
+    file, err := os.Open("../../datasets/sleep_classification.csv")
     if err != nil {
-        panic(err)
+        log.Fatal(err)
+    }
+    defer file.Close()
+
+    reader := csv.NewReader(file)
+    reader.Read() // skip header
+
+    var good, poor int
+    for {
+        record, err := reader.Read()
+        if err != nil {
+            break
+        }
+
+        // Sleep type is in column 4
+        sleepType := record[4]
+        if sleepType == "Morning Person" {
+            good++
+        } else if sleepType == "Night Owl" {
+            poor++
+        }
     }
 
-    // Split dataset (70% train, 30% test)
-    trainData, testData := base.InstancesTrainTestSplit(rawData, 0.7)
-
-    // Initialize Random Forest classifier with 100 trees
-    rf := ensemble.NewRandomForest(100, 3)
-
-    // Train model
-    rf.Fit(trainData)
-
-    // Predict on test set
-    predictions, err := rf.Predict(testData)
-    if err != nil {
-        panic(err)
-    }
-
-    // Evaluate accuracy
-    confMat, err := evaluation.GetConfusionMatrix(testData, predictions)
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println(evaluation.GetSummary(confMat))
-
-    // Student task:
-    // - Adjust number of trees (e.g. 50, 200)
-    // - Remove or add features by filtering attributes before training
+    fmt.Printf("Morning Person (Good Sleep): %d\n", good)
+    fmt.Printf("Night Owl (Poor Sleep): %d\n", poor)
 }
