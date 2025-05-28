@@ -9,7 +9,7 @@ import (
 
 func main() {
     // Load dataset
-    rawData, err := base.ParseCSVToInstances("data/smartcity_sleep_types.csv", true)
+    rawData, err := base.ParseCSVToInstances("datasets/sleep_classification.csv", true)
     if err != nil {
         panic(err)
     }
