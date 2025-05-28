@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"image/color"
 	"log"
 	"os"
 	"strconv"
@@ -11,6 +12,10 @@ import (
 	"github.com/sjwhitworth/golearn/base"
 	"github.com/sjwhitworth/golearn/clustering"
 	"github.com/sjwhitworth/golearn/metrics/pairwise"
+	"gonum.org/v1/plot"
+	"gonum.org/v1/plot/plotter"
+	"gonum.org/v1/plot/vg"
+	"gonum.org/v1/plot/vg/draw"
 )
 
 // loadCSV loads a CSV file and returns the parsed data
@@ -65,7 +70,6 @@ func convertToFloat64(data [][]string) ([][]float64, error) {
 	return result, nil
 }
 
-// createDataGrid creates a GoLearn FixedDataGrid from float64 data
 func createDataGrid(data [][]float64) base.FixedDataGrid {
 	cols := len(data[0])
 	
@@ -102,7 +106,6 @@ func createDataGrid(data [][]float64) base.FixedDataGrid {
 	return instances
 }
 
-// performDBSCAN performs DBSCAN clustering using GoLearn
 func performDBSCAN(data [][]float64) (clustering.ClusterMap, error) {
 	fmt.Println("\n🔍 Performing DBSCAN Clustering...")
 	
@@ -177,7 +180,6 @@ func convertClusterMapToAssignments(clusterMap clustering.ClusterMap, dataSize i
 	return assignments
 }
 
-// calculateClusterCentroids calculates centroids for each cluster
 func calculateClusterCentroids(data [][]float64, assignments []int) map[int][]float64 {
 	centroids := make(map[int][]float64)
 	counts := make(map[int]int)
@@ -214,6 +216,121 @@ func calculateClusterCentroids(data [][]float64, assignments []int) map[int][]fl
 	return centroids
 }
 
+// createClusterPlot creates a scatter plot showing clustering results
+func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]float64, algorithmName string, xFeature, yFeature int, featureNames []string) {
+	fmt.Printf("📈 Creating %s cluster plot...\n", algorithmName)
+	
+	p := plot.New()
+	p.Title.Text = fmt.Sprintf("%s Clustering: %s vs %s", algorithmName, featureNames[xFeature], featureNames[yFeature])
+	p.X.Label.Text = featureNames[xFeature]
+	p.Y.Label.Text = featureNames[yFeature]
+	
+	// Define colors for different clusters
+	colors := []color.RGBA{
+		{R: 255, G: 0, B: 0, A: 255},     // Red
+		{R: 0, G: 255, B: 0, A: 255},     // Green
+		{R: 0, G: 0, B: 255, A: 255},     // Blue
+		{R: 255, G: 165, B: 0, A: 255},   // Orange
+		{R: 128, G: 0, B: 128, A: 255},   // Purple
+		{R: 255, G: 192, B: 203, A: 255}, // Pink
+		{R: 165, G: 42, B: 42, A: 255},   // Brown
+		{R: 128, G: 128, B: 128, A: 255}, // Gray (for noise)
+	}
+	
+	// Group points by cluster
+	clusterPoints := make(map[int]plotter.XYs)
+	
+	for i, clusterID := range assignments {
+		if i < len(data) {
+			point := plotter.XY{X: data[i][xFeature], Y: data[i][yFeature]}
+			clusterPoints[clusterID] = append(clusterPoints[clusterID], point)
+		}
+	}
+	
+	// Create scatter plots for each cluster
+	for clusterID, points := range clusterPoints {
+		if len(points) > 0 {
+			scatter, err := plotter.NewScatter(points)
+			if err != nil {
+				log.Printf("Error creating scatter plot for cluster %d: %v", clusterID, err)
+				continue
+			}
+			
+			// Set color and style
+			colorIndex := clusterID
+			if clusterID == -1 { // Noise points
+				colorIndex = len(colors) - 1
+				scatter.GlyphStyle.Shape = draw.CrossGlyph{}
+			} else {
+				colorIndex = clusterID % (len(colors) - 1)
+				scatter.GlyphStyle.Shape = draw.CircleGlyph{}
+			}
+			
+			scatter.GlyphStyle.Color = colors[colorIndex]
+			scatter.GlyphStyle.Radius = vg.Points(3)
+			
+			p.Add(scatter)
+			
+			// Add to legend
+			if clusterID == -1 {
+				p.Legend.Add("Noise", scatter)
+			} else {
+				p.Legend.Add(fmt.Sprintf("Cluster %d", clusterID), scatter)
+			}
+		}
+	}
+	
+	// Add centroids
+	if len(centroids) > 0 {
+		var centroidPoints plotter.XYs
+		for clusterID, centroid := range centroids {
+			if clusterID >= 0 {
+				centroidPoints = append(centroidPoints, plotter.XY{X: centroid[xFeature], Y: centroid[yFeature]})
+			}
+		}
+		
+		if len(centroidPoints) > 0 {
+			centroidScatter, err := plotter.NewScatter(centroidPoints)
+			if err == nil {
+				centroidScatter.GlyphStyle.Color = color.RGBA{R: 0, G: 0, B: 0, A: 255} // Black
+				centroidScatter.GlyphStyle.Shape = draw.PlusGlyph{}
+				centroidScatter.GlyphStyle.Radius = vg.Points(6)
+				p.Add(centroidScatter)
+				p.Legend.Add("Centroids", centroidScatter)
+			}
+		}
+	}
+	
+	// Save plot
+	filename := fmt.Sprintf("%s_clustering_%s_vs_%s.png", 
+		strings.ToLower(strings.ReplaceAll(algorithmName, " ", "_")),
+		strings.ToLower(strings.ReplaceAll(featureNames[xFeature], " ", "_")),
+		strings.ToLower(strings.ReplaceAll(featureNames[yFeature], " ", "_")))
+	
+	if err := p.Save(10*vg.Inch, 8*vg.Inch, filename); err != nil {
+		log.Printf("Error saving plot: %v", err)
+	} else {
+		fmt.Printf("Plot saved as %s\n", filename)
+	}
+}
+
+// createMultiFeaturePlots creates multiple plots for different feature combinations
+func createMultiFeaturePlots(data [][]float64, assignments []int, centroids map[int][]float64, algorithmName string) {
+	featureNames := []string{"Avg Speed (km/h)", "Air Quality Index", "Noise Level (dB)", "Public Transport Use"}
+	
+	// Create plots for interesting feature combinations
+	plotCombinations := [][]int{
+		{0, 1}, // Avg Speed vs Air Quality
+		{1, 2}, // Air Quality vs Noise Level
+		{0, 3}, // Avg Speed vs Public Transport
+		{2, 3}, // Noise Level vs Public Transport
+	}
+	
+	for _, combo := range plotCombinations {
+		createClusterPlot(data, assignments, centroids, algorithmName, combo[0], combo[1], featureNames)
+	}
+}
+
 // performClustering performs clustering analysis using GoLearn
 func performClustering() {
 	fmt.Println("=== CLUSTERING: Urban Zones Analysis (GoLearn) ===")
@@ -247,6 +364,9 @@ func performClustering() {
 		
 		// Print cluster statistics
 		printClusterStatistics("DBSCAN", dbscanAssignments, dbscanCentroids, data)
+		
+		// Create plots
+		createMultiFeaturePlots(data, dbscanAssignments, dbscanCentroids, "DBSCAN")
 	}
 
 	// Perform Expectation Maximization clustering
@@ -262,10 +382,12 @@ func performClustering() {
 		
 		// Print cluster statistics
 		printClusterStatistics("Expectation Maximization", emAssignments, emCentroids, data)
+		
+		// Create plots
+		createMultiFeaturePlots(data, emAssignments, emCentroids, "Expectation Maximization")
 	}
 }
 
-// printClusterStatistics prints detailed statistics for each cluster
 func printClusterStatistics(algorithmName string, assignments []int, centroids map[int][]float64, data [][]float64) {
 	fmt.Printf("\n📊 %s Cluster Analysis:\n", algorithmName)
 	featureNames := []string{"Avg Speed (km/h)", "Air Quality Index", "Noise Level (dB)", "Public Transport Use"}
@@ -350,4 +472,5 @@ func main() {
 	fmt.Println("\n✅ Clustering Exercise Complete!")
 	fmt.Println("💡 Algorithms: DBSCAN & Expectation Maximization")
 	fmt.Println("🔧 Implementation: GoLearn Machine Learning Library")
+	fmt.Println("📈 Visualization: Multiple cluster plots generated")
 } 
