@@ -11,7 +11,7 @@ import (
 
 func main() {
     // Load dataset
-    rawData, err := base.ParseCSVToInstances("data/smartcity_housing_prices.csv", true)
+    rawData, err := base.ParseCSVToInstances("datasets/housing_prices.csv", true)
     if err != nil {
         panic(err)
     }
