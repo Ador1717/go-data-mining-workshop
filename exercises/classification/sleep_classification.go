@@ -1,376 +1,248 @@
-package main
+package classification
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-
-	"gonum.org/v1/plot"
-	"gonum.org/v1/plot/plotter"
-	"gonum.org/v1/plot/vg"
 )
 
-// CSVData represents parsed CSV data
-type CSVData struct {
-	Headers []string
-	Rows    [][]string
-}
-
-// loadCSV loads a CSV file and returns the parsed data
-func loadCSV(filename string) (*CSVData, error) {
+// loadCSV loads a CSV file and returns features and labels
+func loadCSV(filename string) ([][]float64, []string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, fmt.Errorf("error opening file %s: %v", filename, err)
+		return nil, nil, err
 	}
 	defer file.Close()
 
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("error reading CSV: %v", err)
+		return nil, nil, err
 	}
 
-	if len(records) == 0 {
-		return nil, fmt.Errorf("empty CSV file")
+	var features [][]float64
+	var labels []string
+
+	for i, row := range records {
+		if i == 0 {
+			continue // skip header
+		}
+		if len(row) < 5 {
+			continue
+		}
+		// First 4 are features
+		feat := make([]float64, 4)
+		for j := 0; j < 4; j++ {
+			val, err := strconv.ParseFloat(strings.TrimSpace(row[j]), 64)
+			if err != nil {
+				return nil, nil, err
+			}
+			feat[j] = val
+		}
+		features = append(features, feat)
+		labels = append(labels, strings.TrimSpace(row[4]))
 	}
-
-	return &CSVData{
-		Headers: records[0],
-		Rows:    records[1:],
-	}, nil
+	return features, labels, nil
 }
 
-// FixedDataGrid represents a GoLearn-style data structure
-type FixedDataGrid struct {
-	data   [][]float64
-	labels []string
-	attrs  []string
-}
-
-// Size returns the number of rows and columns
-func (f *FixedDataGrid) Size() (int, int) {
-	if len(f.data) == 0 {
-		return 0, 0
-	}
-	return len(f.data), len(f.data[0])
-}
-
-// KnnClassifier represents a GoLearn-style KNN classifier
-type KnnClassifier struct {
-	distance string
-	weighting string
-	k int
-	trainData *FixedDataGrid
-}
-
-// NewKnnClassifier creates a new GoLearn-style KNN classifier
-func NewKnnClassifier(distance, weighting string, k int) *KnnClassifier {
-	return &KnnClassifier{
-		distance: distance,
-		weighting: weighting,
-		k: k,
-	}
-}
-
-// Fit trains the classifier with training data (GoLearn-style API)
-func (knn *KnnClassifier) Fit(trainData *FixedDataGrid) error {
-	knn.trainData = trainData
-	return nil
-}
-
-// euclideanDistance calculates the Euclidean distance between two points
-func (knn *KnnClassifier) euclideanDistance(point1, point2 []float64) float64 {
+// euclideanDistance computes Euclidean distance between two points
+func euclideanDistance(a, b []float64) float64 {
 	sum := 0.0
-	for i := 0; i < len(point1); i++ {
-		diff := point1[i] - point2[i]
+	for i := range a {
+		diff := a[i] - b[i]
 		sum += diff * diff
 	}
 	return math.Sqrt(sum)
 }
 
-// Predict makes predictions on test data (GoLearn-style API)
-func (knn *KnnClassifier) Predict(testData *FixedDataGrid) (*FixedDataGrid, error) {
-	predictions := make([]string, len(testData.data))
-	
-	for i, testPoint := range testData.data {
-		// Calculate distances to all training points
+// knnPredict predicts the labels of test samples based on k nearest neighbors
+func knnPredict(trainX [][]float64, trainY []string, testX [][]float64, k int) []string {
+	predictions := make([]string, len(testX))
+
+	for i, testPoint := range testX {
 		type neighbor struct {
-			distance float64
-			label    string
+			dist  float64
+			label string
 		}
-		
-		neighbors := make([]neighbor, len(knn.trainData.data))
-		for j, trainPoint := range knn.trainData.data {
-			dist := knn.euclideanDistance(testPoint, trainPoint)
-			neighbors[j] = neighbor{distance: dist, label: knn.trainData.labels[j]}
+		var neighbors []neighbor
+		for j, trainPoint := range trainX {
+			d := euclideanDistance(testPoint, trainPoint)
+			neighbors = append(neighbors, neighbor{d, trainY[j]})
 		}
-		
 		// Sort by distance
-		sort.Slice(neighbors, func(a, b int) bool {
-			return neighbors[a].distance < neighbors[b].distance
+		sort.Slice(neighbors, func(i, j int) bool {
+			return neighbors[i].dist < neighbors[j].dist
 		})
-		
-		// Count votes from K nearest neighbors
+		// Count votes
 		votes := make(map[string]int)
-		for j := 0; j < knn.k && j < len(neighbors); j++ {
+		for j := 0; j < k && j < len(neighbors); j++ {
 			votes[neighbors[j].label]++
 		}
-		
-		// Find the most voted class
+		// Select label with most votes
 		maxVotes := 0
-		var prediction string
+		chosen := ""
 		for label, count := range votes {
 			if count > maxVotes {
 				maxVotes = count
-				prediction = label
+				chosen = label
 			}
 		}
-		
-		predictions[i] = prediction
+		predictions[i] = chosen
 	}
-	
-	// Return predictions in GoLearn-style format
-	return &FixedDataGrid{
-		data:   testData.data,
-		labels: predictions,
-		attrs:  testData.attrs,
-	}, nil
+	return predictions
 }
 
-// createInstances creates GoLearn-style instances from CSV data
-func createInstances(data *CSVData) (*FixedDataGrid, error) {
-	features := make([][]float64, len(data.Rows))
-	labels := make([]string, len(data.Rows))
-	
-	for i, row := range data.Rows {
-		if len(row) < 5 {
-			continue
-		}
-		
-		// Parse features (first 4 columns)
-		feature := make([]float64, 4)
-		for j := 0; j < 4; j++ {
-			val, err := strconv.ParseFloat(strings.TrimSpace(row[j]), 64)
-			if err != nil {
-				return nil, fmt.Errorf("error parsing feature at row %d, col %d: %v", i, j, err)
-			}
-			feature[j] = val
-		}
-		
-		features[i] = feature
-		labels[i] = strings.TrimSpace(row[4])
-	}
-	
-	return &FixedDataGrid{
-		data:   features,
-		labels: labels,
-		attrs:  data.Headers[:4],
-	}, nil
-}
-
-// InstancesTrainTestSplit splits data into training and test sets (GoLearn-style API)
-func InstancesTrainTestSplit(instances *FixedDataGrid, trainRatio float64) (*FixedDataGrid, *FixedDataGrid) {
-	trainSize := int(float64(len(instances.data)) * trainRatio)
-	
-	trainData := &FixedDataGrid{
-		data:   instances.data[:trainSize],
-		labels: instances.labels[:trainSize],
-		attrs:  instances.attrs,
-	}
-	
-	testData := &FixedDataGrid{
-		data:   instances.data[trainSize:],
-		labels: instances.labels[trainSize:],
-		attrs:  instances.attrs,
-	}
-	
-	return trainData, testData
-}
-
-// GetConfusionMatrix calculates accuracy (simplified version of GoLearn's evaluation)
-func GetConfusionMatrix(testData, predictions *FixedDataGrid) (map[string]interface{}, error) {
+// computeAccuracy compares true labels with predictions
+func computeAccuracy(trueLabels, predicted []string) float64 {
 	correct := 0
-	total := len(testData.labels)
-	
-	for i := 0; i < total; i++ {
-		if testData.labels[i] == predictions.labels[i] {
+	for i := range trueLabels {
+		if trueLabels[i] == predicted[i] {
 			correct++
 		}
 	}
-	
-	accuracy := float64(correct) / float64(total)
-	
-	return map[string]interface{}{
-		"accuracy": accuracy,
-		"correct":  correct,
-		"total":    total,
-	}, nil
+	return float64(correct) / float64(len(trueLabels))
 }
 
-// GetSummary returns a summary string (GoLearn-style API)
-func GetSummary(confusionMatrix map[string]interface{}) string {
-	accuracy := confusionMatrix["accuracy"].(float64)
-	correct := confusionMatrix["correct"].(int)
-	total := confusionMatrix["total"].(int)
-	
-	return fmt.Sprintf("Overall accuracy: %.4f (%d/%d correct predictions)", 
-		accuracy, correct, total)
-}
+// trainTestSplit splits data into train/test sets
+func trainTestSplit(X [][]float64, Y []string, ratio float64) ([][]float64, []string, [][]float64, []string) {
+	n := len(X)
+	// Create a local rand.Rand with a fixed seed for reproducibility
+	r := rand.New(rand.NewSource(42))
 
-// performGoLearnKNN performs classification using GoLearn-style KNN classifier
-func performGoLearnKNN(instances *FixedDataGrid, k int) error {
-	fmt.Printf("\n🔍 Performing KNN Classification (k=%d) using GoLearn-style API...\n", k)
+	perm := r.Perm(n)
+	trainSize := int(float64(n) * ratio)
 
-	// Split data into training and test sets (80/20)
-	trainData, testData := InstancesTrainTestSplit(instances, 0.8)
+	var trainX, testX [][]float64
+	var trainY, testY []string
 
-	fmt.Printf("Training samples: %d\n", func() int { rows, _ := trainData.Size(); return rows }())
-	fmt.Printf("Test samples: %d\n", func() int { rows, _ := testData.Size(); return rows }())
-
-	// Create KNN classifier
-	classifier := NewKnnClassifier("euclidean", "linear", k)
-
-	// Train the classifier
-	err := classifier.Fit(trainData)
-	if err != nil {
-		return fmt.Errorf("failed to fit KNN classifier: %v", err)
-	}
-
-	// Make predictions
-	predictions, err := classifier.Predict(testData)
-	if err != nil {
-		return fmt.Errorf("failed to make predictions: %v", err)
-	}
-
-	// Calculate accuracy using GoLearn-style evaluation
-	confusionMatrix, err := GetConfusionMatrix(testData, predictions)
-	if err != nil {
-		return fmt.Errorf("failed to get confusion matrix: %v", err)
-	}
-
-	fmt.Printf("\n📊 GoLearn-style KNN Results:\n")
-	fmt.Println(GetSummary(confusionMatrix))
-
-	// Show some example predictions
-	fmt.Println("\nSample Predictions:")
-	for i := 0; i < 5 && i < len(testData.labels); i++ {
-		fmt.Printf("Actual: %-15s | Predicted: %-15s | %s\n", 
-			testData.labels[i], predictions.labels[i], 
-			func() string { if testData.labels[i] == predictions.labels[i] { return "✓" } else { return "✗" } }())
-	}
-
-	return nil
-}
-
-// createSleepPatternChart creates a single chart showing sleep patterns
-func createSleepPatternChart(data *CSVData) {
-	fmt.Println("\n📈 Creating Sleep Pattern Visualization...")
-
-	p := plot.New()
-	p.Title.Text = "Sleep Hours vs Caffeine Intake by Sleep Type"
-	p.X.Label.Text = "Hours of Sleep"
-	p.Y.Label.Text = "Caffeine Intake (mg)"
-
-	// Separate data by sleep type
-	var morningPoints, nightPoints plotter.XYs
-
-	for _, row := range data.Rows {
-		if len(row) < 5 {
-			continue
+	for i, idx := range perm {
+		if i < trainSize {
+			trainX = append(trainX, X[idx])
+			trainY = append(trainY, Y[idx])
+		} else {
+			testX = append(testX, X[idx])
+			testY = append(testY, Y[idx])
 		}
+	}
+	return trainX, trainY, testX, testY
+}
 
-		caffeine, err1 := strconv.ParseFloat(strings.TrimSpace(row[0]), 64)
-		sleepHours, err2 := strconv.ParseFloat(strings.TrimSpace(row[1]), 64)
-		sleepType := strings.TrimSpace(row[4])
+// printConfusionMatrix prints a confusion matrix of actual vs predicted labels
+func printConfusionMatrix(actual []string, predicted []string) {
+	if len(actual) != len(predicted) {
+		fmt.Println("Length mismatch in confusion matrix data")
+		return
+	}
 
-		if err1 != nil || err2 != nil {
-			continue
-		}
+	labelSet := make(map[string]bool)
+	for _, label := range actual {
+		labelSet[label] = true
+	}
+	for _, label := range predicted {
+		labelSet[label] = true
+	}
 
-		point := plotter.XY{X: sleepHours, Y: caffeine}
+	labels := make([]string, 0, len(labelSet))
+	for label := range labelSet {
+		labels = append(labels, label)
+	}
+	// Sort labels alphabetically
+	sort.Strings(labels)
 
-		if sleepType == "Morning Person" {
-			morningPoints = append(morningPoints, point)
-		} else if sleepType == "Night Owl" {
-			nightPoints = append(nightPoints, point)
+	// Initialize matrix
+	matrix := make(map[string]map[string]int)
+	for _, actualLabel := range labels {
+		matrix[actualLabel] = make(map[string]int)
+		for _, predictedLabel := range labels {
+			matrix[actualLabel][predictedLabel] = 0
 		}
 	}
 
-	// Create scatter plots
-	if len(morningPoints) > 0 {
-		morningScatter, err := plotter.NewScatter(morningPoints)
-		if err == nil {
-			morningScatter.GlyphStyle.Color = plotter.DefaultGlyphStyle.Color
-			morningScatter.GlyphStyle.Radius = vg.Points(3)
-			p.Add(morningScatter)
-			p.Legend.Add("Morning Person", morningScatter)
-		}
+	// Populate matrix
+	for i := range actual {
+		matrix[actual[i]][predicted[i]]++
 	}
 
-	if len(nightPoints) > 0 {
-		nightScatter, err := plotter.NewScatter(nightPoints)
-		if err == nil {
-			nightScatter.GlyphStyle.Color = plotter.DefaultLineStyle.Color
-			nightScatter.GlyphStyle.Radius = vg.Points(3)
-			p.Add(nightScatter)
-			p.Legend.Add("Night Owl", nightScatter)
-		}
+	// Print matrix
+	fmt.Println("\n Confusion Matrix (Actual vs Predicted):")
+	fmt.Printf("%-15s", "Actual \\ Pred")
+	for _, label := range labels {
+		fmt.Printf("%-15s", label)
 	}
-
-	// Save plot
-	filename := "sleep_pattern_analysis.png"
-	if err := p.Save(8*vg.Inch, 6*vg.Inch, filename); err != nil {
-		log.Printf("Error saving plot: %v", err)
-	} else {
-		fmt.Printf("Chart saved as %s\n", filename)
-	}
-}
-
-// performClassification performs the complete classification analysis
-func performClassification() {
-	fmt.Println("=== CLASSIFICATION: Sleep Pattern Analysis (GoLearn-style KNN) ===")
-
-	// Load data
-	data, err := loadCSV("../../datasets/sleep_classification.csv")
-	if err != nil {
-		log.Fatalf("Error loading CSV: %v", err)
-	}
-
-	fmt.Printf("Loaded %d records with %d features\n", len(data.Rows), len(data.Headers)-1)
-	fmt.Printf("Features: %s\n", strings.Join(data.Headers[:len(data.Headers)-1], ", "))
-	fmt.Printf("Target: %s\n", data.Headers[len(data.Headers)-1])
-
-	// Create GoLearn-style instances
-	instances, err := createInstances(data)
-	if err != nil {
-		log.Fatalf("Error creating instances: %v", err)
-	}
-
-	// Perform GoLearn-style KNN classification
-	err = performGoLearnKNN(instances, 3)
-	if err != nil {
-		log.Printf("GoLearn-style KNN failed: %v", err)
-	}
-
-	// Create visualization
-	createSleepPatternChart(data)
-}
-
-func main() {
-	fmt.Println("🧠 Sleep Pattern Classification Exercise")
-	fmt.Println("========================================")
-	fmt.Println("Using GoLearn-style KNN Classifier")
 	fmt.Println()
+	for _, actualLabel := range labels {
+		fmt.Printf("%-15s", actualLabel)
+		for _, predictedLabel := range labels {
+			fmt.Printf("%-15d", matrix[actualLabel][predictedLabel])
+		}
+		fmt.Println()
+	}
+}
 
-	performClassification()
+// reads 4 float64 features from user input
+func readUserInput() ([]float64, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("\n👤 Enter if you drink energy drinks (0 or 1), hours of sleep, screen time before bed (hrs) and wake up hour separated by space (e.g. 0 6 2.4 9):")
 
-	fmt.Println("\n✅ Classification Exercise Complete!")
-	fmt.Println("💡 Algorithm: K-Nearest Neighbors (GoLearn-style API)")
-	fmt.Println("🔧 Implementation: GoLearn-compatible Interface")
-	fmt.Println("📈 Visualization: Single Sleep Pattern Chart")
-} 
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	line = strings.TrimSpace(line)
+	parts := strings.Fields(line)
+	if len(parts) != 4 {
+		return nil, fmt.Errorf("expected 4 values, got %d", len(parts))
+	}
+
+	var input []float64
+	for _, p := range parts {
+		val, err := strconv.ParseFloat(p, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid float value: %v", err)
+		}
+		input = append(input, val)
+	}
+	return input, nil
+}
+
+func Run() {
+	fmt.Println("Simple KNN Classifier")
+
+	X, Y, err := loadCSV("datasets/sleep_classification.csv")
+	if err != nil {
+		log.Fatal("Error loading CSV:", err)
+	}
+
+	k:=3
+	 // <- change this value for different k and find the best one
+
+	trainX, trainY, testX, testY := trainTestSplit(X, Y, 0.8)
+	predicted := knnPredict(trainX, trainY, testX, k)
+	accuracy := computeAccuracy(testY, predicted)
+	fmt.Printf("\nk= %d\n", k)
+	fmt.Printf("\nAccuracy: %.2f%%\n", accuracy*100)
+
+	fmt.Println("\nSample Predictions:")
+	for i := 0; i < 10 && i < len(testY); i++ {
+		fmt.Printf("Actual: %-15s Predicted: %-15s\n", testY[i], predicted[i])
+	}
+
+	printConfusionMatrix(testY, predicted)
+
+	//prediction based on input
+	userInput, err := readUserInput()
+	if err != nil {
+		log.Fatal("Invalid input:", err)
+	}
+
+	//// knnPredict expects a slice of test points, so wrap userInput in a slice
+	userPred := knnPredict(trainX, trainY, [][]float64{userInput}, k)
+	fmt.Printf("\nPrediction for your input: %s\n", userPred[0])
+}

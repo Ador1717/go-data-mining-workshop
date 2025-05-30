@@ -1,4 +1,4 @@
-package main
+package regression
 
 import (
 	"encoding/csv"
@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
 	"gonum.org/v1/gonum/stat"
 	"gonum.org/v1/plot"
 	"gonum.org/v1/plot/plotter"
@@ -30,24 +29,26 @@ func (d XYData) XY(i int) (x, y float64) {
 }
 
 // loadCSV loads a CSV file and returns the parsed data
-func loadCSV(filename string) ([][]string, error) {
+func loadCSV(filename string) ([]string, [][]string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, fmt.Errorf("error opening file %s: %v", filename, err)
+		return nil, nil, fmt.Errorf("error opening file %s: %v", filename, err)
 	}
 	defer file.Close()
 
 	reader := csv.NewReader(file)
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("error reading CSV: %v", err)
+		return nil, nil, fmt.Errorf("error reading CSV: %v", err)
 	}
 
 	if len(records) == 0 {
-		return nil, fmt.Errorf("empty CSV file")
+		return nil, nil, fmt.Errorf("empty CSV file")
 	}
 
-	return records[1:], nil // Skip header
+	header := records[0]
+	data := records[1:]
+	return header, data, nil
 }
 
 // convertToFloat64 converts string data to float64
@@ -80,12 +81,16 @@ func convertToFloat64(data [][]string) ([][]float64, error) {
 	return result, nil
 }
 
+func predictPrice(featureValue, slope, intercept float64) float64 {
+    return slope*featureValue + intercept
+}
+
 // performRegression performs linear regression using gonum/stat
 func performRegression() {
 	fmt.Println("=== REGRESSION: Housing Price Prediction (gonum/stat) ===")
 	
 	// Load housing price data
-	csvData, err := loadCSV("../../datasets/housing_prices.csv")
+	header, csvData, err := loadCSV("datasets/housing_prices.csv")
 	if err != nil {
 		log.Fatalf("Error loading CSV: %v", err)
 	}
@@ -100,24 +105,30 @@ func performRegression() {
 
 	fmt.Printf("Processed %d valid records\n", len(data))
 
-	// Extract size and price data
-	var sizeX, priceY []float64
+	featureIndex := 0 // Index for size_sqm <- adjust index to use different feature
+	featureName := "unknown"
+	if featureIndex >= 0 && featureIndex < len(header) {
+		featureName = header[featureIndex]
+	}
+
+	// Extract feature and price data
+	var featureX, priceY []float64
 	for _, row := range data {
 		if len(row) >= 6 {
-			sizeX = append(sizeX, row[0]) // size_sqm
+			featureX = append(featureX, row[featureIndex]) // size_sqm 
 			priceY = append(priceY, row[5]) // price_eur
 		}
 	}
 
 	// Perform linear regression using gonum/stat
-	intercept, slope := stat.LinearRegression(sizeX, priceY, nil, false)
+	intercept, slope := stat.LinearRegression(featureX, priceY, nil, false)
 	
 	// Calculate R-squared
 	meanY := stat.Mean(priceY, nil)
 	var ssTotal, ssRes float64
 	
-	for i := range sizeX {
-		predicted := slope*sizeX[i] + intercept
+	for i := range featureX {
+		predicted := slope*featureX[i] + intercept
 		ssRes += (priceY[i] - predicted) * (priceY[i] - predicted)
 		ssTotal += (priceY[i] - meanY) * (priceY[i] - meanY)
 	}
@@ -125,26 +136,31 @@ func performRegression() {
 	r2 := 1.0 - (ssRes / ssTotal)
 
 	// Display results
-	fmt.Printf("\n🏠 Linear Regression Results:\n")
+	fmt.Printf("\nLinear Regression Results:\n")
 	fmt.Printf("  R² = %.4f\n", r2)
-	fmt.Printf("  Equation: price = %.2f * size + %.2f\n", slope, intercept)
+	fmt.Printf("  Equation: price = %.2f * %s + %.2f\n", slope, featureName, intercept)
 	fmt.Printf("  Formula: %.3f*x + %.3f\n", slope, intercept)
 
+	// Uncomment to predict price for a specific house size
+	// houseSize :=15.0
+	// predictedPrice := predictPrice(houseSize, slope, intercept) // Example prediction for 100 sqm
+	// fmt.Printf("\nPrice for a house of size %g sqm: %g EUR\n", houseSize, predictedPrice)
+
 	// Create visualization
-	createPlot(sizeX, priceY, slope, intercept, r2)
+	createPlot(featureX, priceY, slope, intercept, r2, featureName)
 }
 
 // createPlot creates a plot with PNG output
-func createPlot(X, y []float64, slope, intercept, r2 float64) {
-	fmt.Println("\n📊 Creating Visualization...")
+func createPlot(X, y []float64, slope, intercept, r2 float64, featureName string) {
+	fmt.Println("\nCreating Visualization...")
 	
 	// Create XYData for plotting
 	data := XYData{X: X, Y: y}
 	
 	// Create plot
 	p := plot.New()
-	p.Title.Text = "Housing Price Prediction: Size vs Price"
-	p.X.Label.Text = "Size (sqm)"
+	p.Title.Text = fmt.Sprintf("Housing Price Prediction: %s vs Price", featureName)
+	p.X.Label.Text = featureName
 	p.Y.Label.Text = "Price (EUR)"
 	
 	// Set default styles
@@ -172,26 +188,26 @@ func createPlot(X, y []float64, slope, intercept, r2 float64) {
 	p.Legend.Add(fmt.Sprintf("Linear Regression (R²=%.3f)", r2), line)
 	
 	// Save as PNG
-	if err := p.Save(8*vg.Inch, 6*vg.Inch, "regression_simple.png"); err != nil {
+	if err := p.Save(8*vg.Inch, 6*vg.Inch, "exercises/regression/regression_simple.png"); err != nil {
 		log.Printf("Error saving PNG: %v", err)
 	} else {
 		fmt.Printf("Plot saved as regression_simple.png\n")
 	}
 }
 
-func main() {
-	fmt.Println("🏠 Simple Housing Price Regression")
+func Run() {
+	fmt.Println("Simple Housing Price Regression")
 	fmt.Println("==================================")
 	fmt.Println("Using gonum/stat.LinearRegression")
 	fmt.Println()
 
 	performRegression()
 
-	fmt.Println("\n✅ Regression Exercise Complete!")
-	fmt.Println("📊 Generated visualizations:")
+	fmt.Println("\nRegression Exercise Complete!")
+	fmt.Println("Generated visualizations:")
 	fmt.Println("  • regression_simple.png - Linear Regression Plot")
 	fmt.Println()
-	fmt.Println("💡 Algorithm: Linear Regression")
-	fmt.Println("🔧 Implementation: gonum/stat.LinearRegression")
-	fmt.Println("📈 Visualization: Gonum Plot")
+	fmt.Println("Algorithm: Linear Regression")
+	fmt.Println("Implementation: gonum/stat.LinearRegression")
+	fmt.Println("Visualization: Gonum Plot")
 } 

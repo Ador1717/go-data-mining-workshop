@@ -1,4 +1,4 @@
-package main
+package clustering
 
 import (
 	"encoding/csv"
@@ -42,55 +42,55 @@ func loadCSV(filename string) ([][]string, error) {
 // convertToFloat64 converts string data to float64
 func convertToFloat64(data [][]string) ([][]float64, error) {
 	result := make([][]float64, 0, len(data))
-	
+
 	for _, row := range data {
 		if len(strings.TrimSpace(strings.Join(row, ""))) == 0 {
 			continue
 		}
-		
+
 		floatRow := make([]float64, 0, len(row)-1) // Skip first column (zone_id)
-		for i := 1; i < len(row); i++ { // Start from index 1 to skip zone_id
+		for i := 1; i < len(row); i++ {            // Start from index 1 to skip zone_id
 			val := row[i]
 			if strings.TrimSpace(val) == "" {
 				continue
 			}
-			
+
 			f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
 			if err != nil {
 				return nil, fmt.Errorf("error converting '%s' to float64: %v", val, err)
 			}
 			floatRow = append(floatRow, f)
 		}
-		
+
 		if len(floatRow) > 0 {
 			result = append(result, floatRow)
 		}
 	}
-	
+
 	return result, nil
 }
 
 func createDataGrid(data [][]float64) base.FixedDataGrid {
 	cols := len(data[0])
-	
+
 	// Create attributes
 	attrs := make([]base.Attribute, cols)
 	featureNames := []string{"Avg_Speed", "Air_Quality", "Noise_Level", "Public_Transport"}
 	for i := 0; i < cols; i++ {
 		attrs[i] = base.NewFloatAttribute(featureNames[i])
 	}
-	
+
 	// Create instances
 	instances := base.NewDenseInstances()
-	
+
 	// Add attributes
 	for _, attr := range attrs {
 		instances.AddAttribute(attr)
 	}
-	
+
 	// Extend to accommodate data
 	instances.Extend(len(data))
-	
+
 	// Add data
 	for rowIdx, row := range data {
 		for colIdx, value := range row {
@@ -102,72 +102,72 @@ func createDataGrid(data [][]float64) base.FixedDataGrid {
 			instances.Set(attrSpec, rowIdx, base.PackFloatToBytes(value))
 		}
 	}
-	
+
 	return instances
 }
 
 func performDBSCAN(data [][]float64) (clustering.ClusterMap, error) {
 	fmt.Println("\n🔍 Performing DBSCAN Clustering...")
-	
+
 	// Create data grid
 	dataGrid := createDataGrid(data)
-	
+
 	// Set up DBSCAN parameters
 	params := clustering.DBSCANParameters{
 		ClusterParameters: clustering.ClusterParameters{
 			Attributes: dataGrid.AllAttributes(),
 			Metric:     pairwise.NewEuclidean(),
 		},
-		Eps:      15.0, // Maximum distance for neighborhood
-		MinCount: 5,    // Minimum points to form a cluster
+		Eps:      5.0, // Maximum distance for neighborhood
+		MinCount: 5,   // Minimum points to form a cluster
 	}
-	
+
 	// Perform DBSCAN clustering
 	clusterMap, err := clustering.DBSCAN(dataGrid, params)
 	if err != nil {
 		return nil, fmt.Errorf("DBSCAN failed: %v", err)
 	}
-	
+
 	return clusterMap, nil
 }
 
 // performExpectationMaximization performs EM clustering using GoLearn
 func performExpectationMaximization(data [][]float64, nComponents int) (clustering.ClusterMap, error) {
 	fmt.Println("\n🔍 Performing Expectation Maximization Clustering...")
-	
+
 	// Create data grid
 	dataGrid := createDataGrid(data)
-	
+
 	// Create EM clusterer
 	em, err := clustering.NewExpectationMaximization(nComponents)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create EM clusterer: %v", err)
 	}
-	
+
 	// Fit the model
 	err = em.Fit(dataGrid)
 	if err != nil {
 		return nil, fmt.Errorf("EM fit failed: %v", err)
 	}
-	
+
 	// Predict clusters
 	clusterMap, err := em.Predict(dataGrid)
 	if err != nil {
 		return nil, fmt.Errorf("EM predict failed: %v", err)
 	}
-	
+
 	return clusterMap, nil
 }
 
 // convertClusterMapToAssignments converts GoLearn ClusterMap to simple assignments array
 func convertClusterMapToAssignments(clusterMap clustering.ClusterMap, dataSize int) []int {
 	assignments := make([]int, dataSize)
-	
+
 	// Initialize all points as noise (-1)
 	for i := range assignments {
 		assignments[i] = -1
 	}
-	
+
 	// Assign cluster IDs
 	for clusterID, pointIndices := range clusterMap {
 		for _, pointIndex := range pointIndices {
@@ -176,14 +176,14 @@ func convertClusterMapToAssignments(clusterMap clustering.ClusterMap, dataSize i
 			}
 		}
 	}
-	
+
 	return assignments
 }
 
 func calculateClusterCentroids(data [][]float64, assignments []int) map[int][]float64 {
 	centroids := make(map[int][]float64)
 	counts := make(map[int]int)
-	
+
 	// Initialize centroids
 	for _, clusterID := range assignments {
 		if clusterID >= 0 {
@@ -193,7 +193,7 @@ func calculateClusterCentroids(data [][]float64, assignments []int) map[int][]fl
 			}
 		}
 	}
-	
+
 	// Sum up points in each cluster
 	for i, clusterID := range assignments {
 		if clusterID >= 0 {
@@ -203,7 +203,7 @@ func calculateClusterCentroids(data [][]float64, assignments []int) map[int][]fl
 			counts[clusterID]++
 		}
 	}
-	
+
 	// Calculate averages
 	for clusterID := range centroids {
 		if counts[clusterID] > 0 {
@@ -212,19 +212,19 @@ func calculateClusterCentroids(data [][]float64, assignments []int) map[int][]fl
 			}
 		}
 	}
-	
+
 	return centroids
 }
 
 // createClusterPlot creates a scatter plot showing clustering results
 func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]float64, algorithmName string, xFeature, yFeature int, featureNames []string) {
 	fmt.Printf("📈 Creating %s cluster plot...\n", algorithmName)
-	
+
 	p := plot.New()
 	p.Title.Text = fmt.Sprintf("%s Clustering: %s vs %s", algorithmName, featureNames[xFeature], featureNames[yFeature])
 	p.X.Label.Text = featureNames[xFeature]
 	p.Y.Label.Text = featureNames[yFeature]
-	
+
 	// Define colors for different clusters
 	colors := []color.RGBA{
 		{R: 255, G: 0, B: 0, A: 255},     // Red
@@ -236,17 +236,17 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 		{R: 165, G: 42, B: 42, A: 255},   // Brown
 		{R: 128, G: 128, B: 128, A: 255}, // Gray (for noise)
 	}
-	
+
 	// Group points by cluster
 	clusterPoints := make(map[int]plotter.XYs)
-	
+
 	for i, clusterID := range assignments {
 		if i < len(data) {
 			point := plotter.XY{X: data[i][xFeature], Y: data[i][yFeature]}
 			clusterPoints[clusterID] = append(clusterPoints[clusterID], point)
 		}
 	}
-	
+
 	// Create scatter plots for each cluster
 	for clusterID, points := range clusterPoints {
 		if len(points) > 0 {
@@ -255,7 +255,7 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 				log.Printf("Error creating scatter plot for cluster %d: %v", clusterID, err)
 				continue
 			}
-			
+
 			// Set color and style
 			colorIndex := clusterID
 			if clusterID == -1 { // Noise points
@@ -265,12 +265,12 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 				colorIndex = clusterID % (len(colors) - 1)
 				scatter.GlyphStyle.Shape = draw.CircleGlyph{}
 			}
-			
+
 			scatter.GlyphStyle.Color = colors[colorIndex]
 			scatter.GlyphStyle.Radius = vg.Points(3)
-			
+
 			p.Add(scatter)
-			
+
 			// Add to legend
 			if clusterID == -1 {
 				p.Legend.Add("Noise", scatter)
@@ -279,7 +279,7 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 			}
 		}
 	}
-	
+
 	// Add centroids
 	if len(centroids) > 0 {
 		var centroidPoints plotter.XYs
@@ -288,7 +288,7 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 				centroidPoints = append(centroidPoints, plotter.XY{X: centroid[xFeature], Y: centroid[yFeature]})
 			}
 		}
-		
+
 		if len(centroidPoints) > 0 {
 			centroidScatter, err := plotter.NewScatter(centroidPoints)
 			if err == nil {
@@ -300,22 +300,22 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 			}
 		}
 	}
-	
+
 	// Save plot
 	xFeatureName := strings.ReplaceAll(strings.ReplaceAll(featureNames[xFeature], " ", "_"), "(", "")
 	xFeatureName = strings.ReplaceAll(xFeatureName, ")", "")
 	yFeatureName := strings.ReplaceAll(strings.ReplaceAll(featureNames[yFeature], " ", "_"), "(", "")
 	yFeatureName = strings.ReplaceAll(yFeatureName, ")", "")
-	
-	filename := fmt.Sprintf("%s_clustering_%s_vs_%s.png", 
+
+	filename := fmt.Sprintf("%s_clustering_%s_vs_%s.png",
 		strings.ToLower(strings.ReplaceAll(algorithmName, " ", "_")),
 		strings.ToLower(xFeatureName),
 		strings.ToLower(yFeatureName))
-	
+
 	// Clean up filename further
 	filename = strings.ReplaceAll(filename, "/", "_")
 	filename = strings.ReplaceAll(filename, "\\", "_")
-	
+
 	if err := p.Save(10*vg.Inch, 8*vg.Inch, filename); err != nil {
 		log.Printf("Error saving plot: %v", err)
 	} else {
@@ -326,7 +326,7 @@ func createClusterPlot(data [][]float64, assignments []int, centroids map[int][]
 // createMultiFeaturePlots creates multiple plots for different feature combinations
 func createMultiFeaturePlots(data [][]float64, assignments []int, centroids map[int][]float64, algorithmName string) {
 	featureNames := []string{"Avg Speed (km/h)", "Air Quality Index", "Noise Level (dB)", "Public Transport Use"}
-	
+
 	// Create plots for interesting feature combinations
 	plotCombinations := [][]int{
 		{0, 1}, // Avg Speed vs Air Quality
@@ -334,7 +334,7 @@ func createMultiFeaturePlots(data [][]float64, assignments []int, centroids map[
 		{0, 3}, // Avg Speed vs Public Transport
 		{2, 3}, // Noise Level vs Public Transport
 	}
-	
+
 	for _, combo := range plotCombinations {
 		createClusterPlot(data, assignments, centroids, algorithmName, combo[0], combo[1], featureNames)
 	}
@@ -343,9 +343,9 @@ func createMultiFeaturePlots(data [][]float64, assignments []int, centroids map[
 // performClustering performs clustering analysis using GoLearn
 func performClustering() {
 	fmt.Println("=== CLUSTERING: Urban Zones Analysis (GoLearn) ===")
-	
+
 	// Load data
-	csvData, err := loadCSV("../../datasets/zones_clustering.csv")
+	csvData, err := loadCSV("datasets/zones_clustering.csv")
 	if err != nil {
 		log.Fatalf("Error loading CSV: %v", err)
 	}
@@ -366,14 +366,14 @@ func performClustering() {
 		log.Printf("DBSCAN failed: %v", err)
 	} else {
 		fmt.Printf("DBSCAN found %d clusters\n", len(dbscanClusters))
-		
+
 		// Convert to assignments and calculate centroids
 		dbscanAssignments := convertClusterMapToAssignments(dbscanClusters, len(data))
 		dbscanCentroids := calculateClusterCentroids(data, dbscanAssignments)
-		
+
 		// Print cluster statistics
 		printClusterStatistics("DBSCAN", dbscanAssignments, dbscanCentroids, data)
-		
+
 		// Create plots
 		createMultiFeaturePlots(data, dbscanAssignments, dbscanCentroids, "DBSCAN")
 	}
@@ -384,14 +384,14 @@ func performClustering() {
 		log.Printf("Expectation Maximization failed: %v", err)
 	} else {
 		fmt.Printf("Expectation Maximization found %d clusters\n", len(emClusters))
-		
+
 		// Convert to assignments and calculate centroids
 		emAssignments := convertClusterMapToAssignments(emClusters, len(data))
 		emCentroids := calculateClusterCentroids(data, emAssignments)
-		
+
 		// Print cluster statistics
 		printClusterStatistics("Expectation Maximization", emAssignments, emCentroids, data)
-		
+
 		// Create plots
 		createMultiFeaturePlots(data, emAssignments, emCentroids, "Expectation Maximization")
 	}
@@ -400,7 +400,7 @@ func performClustering() {
 func printClusterStatistics(algorithmName string, assignments []int, centroids map[int][]float64, data [][]float64) {
 	fmt.Printf("\n📊 %s Cluster Analysis:\n", algorithmName)
 	featureNames := []string{"Avg Speed (km/h)", "Air Quality Index", "Noise Level (dB)", "Public Transport Use"}
-	
+
 	// Count points in each cluster
 	clusterCounts := make(map[int]int)
 	for _, clusterID := range assignments {
@@ -408,7 +408,7 @@ func printClusterStatistics(algorithmName string, assignments []int, centroids m
 			clusterCounts[clusterID]++
 		}
 	}
-	
+
 	// Count noise points (cluster ID = -1)
 	noiseCount := 0
 	for _, clusterID := range assignments {
@@ -416,17 +416,17 @@ func printClusterStatistics(algorithmName string, assignments []int, centroids m
 			noiseCount++
 		}
 	}
-	
+
 	if noiseCount > 0 {
 		fmt.Printf("   🔸 Noise points: %d\n", noiseCount)
 	}
-	
+
 	for clusterID, centroid := range centroids {
 		count := clusterCounts[clusterID]
 		fmt.Printf("\n🏙️  Cluster %d (%d zones):\n", clusterID, count)
-		fmt.Printf("   Centroid: [%.2f, %.2f, %.2f, %.2f]\n", 
+		fmt.Printf("   Centroid: [%.2f, %.2f, %.2f, %.2f]\n",
 			centroid[0], centroid[1], centroid[2], centroid[3])
-		
+
 		// Calculate detailed statistics for this cluster
 		var clusterData [][]float64
 		for i, assignedCluster := range assignments {
@@ -434,14 +434,14 @@ func printClusterStatistics(algorithmName string, assignments []int, centroids m
 				clusterData = append(clusterData, data[i])
 			}
 		}
-		
+
 		if len(clusterData) > 0 {
 			for f := 0; f < len(featureNames); f++ {
 				var values []float64
 				for _, point := range clusterData {
 					values = append(values, point[f])
 				}
-				
+
 				sum := 0.0
 				min, max := values[0], values[0]
 				for _, v := range values {
@@ -454,13 +454,13 @@ func printClusterStatistics(algorithmName string, assignments []int, centroids m
 					}
 				}
 				mean := sum / float64(len(values))
-				
-				fmt.Printf("   %s: Mean=%.2f, Range=[%.2f, %.2f]\n", 
+
+				fmt.Printf("   %s: Mean=%.2f, Range=[%.2f, %.2f]\n",
 					featureNames[f], mean, min, max)
 			}
 		}
 	}
-	
+
 	fmt.Printf("\n📈 %s Quality Metrics:\n", algorithmName)
 	fmt.Printf("   Total data points: %d\n", len(data))
 	fmt.Printf("   Number of clusters: %d\n", len(centroids))
@@ -470,7 +470,7 @@ func printClusterStatistics(algorithmName string, assignments []int, centroids m
 	}
 }
 
-func main() {
+func Run() {
 	fmt.Println("🏙️  Urban Zones Clustering Exercise")
 	fmt.Println("===================================")
 	fmt.Println("Using GoLearn Clustering Algorithms")
@@ -482,4 +482,4 @@ func main() {
 	fmt.Println("💡 Algorithms: DBSCAN & Expectation Maximization")
 	fmt.Println("🔧 Implementation: GoLearn Machine Learning Library")
 	fmt.Println("📈 Visualization: Multiple cluster plots generated")
-} 
+}
