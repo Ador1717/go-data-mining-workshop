@@ -1,5 +1,4 @@
 package regression
-
 import (
 	"encoding/csv"
 	"fmt"

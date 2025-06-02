@@ -15,7 +15,7 @@ import (
 	"gonum.org/v1/plot/vg"
 	"gonum.org/v1/plot/vg/draw"
 )
-
+//Load and Parse CSV Data
 func loadCSV(filename string) ([][]float64, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -52,6 +52,7 @@ func loadCSV(filename string) ([][]float64, error) {
 	return data, nil
 }
 
+//Plotting the Clusters
 
 func createClusterPlot(assignments []int, data [][]float64, xIdx, yIdx int, features []string, filename string) error {
 	p := plot.New()
@@ -94,7 +95,7 @@ func sanitizeFilename(name string) string {
 	replacer := strings.NewReplacer(" ", "_", "(", "", ")", "", "/", "_", "%", "percent")
 	return replacer.Replace(strings.ToLower(name))
 }
-
+//main fun
 func Run() {
 	fmt.Println("Clustering Analysis")
 
@@ -103,7 +104,7 @@ func Run() {
 		log.Fatal("Error loading CSV:", err)
 	}
 
-	// KMeans: 1000 iterations, 3 clusters, using Euclidean distance
+	// Run KMeans with 1000 iterations, 3 clusters
 	c, err := clusters.KMeans(1000, 3, clusters.EuclideanDistance) //adjust number of clusters here
 	if err != nil {
 		log.Fatal("Failed to create KMeans clusterer:", err)
@@ -116,7 +117,7 @@ func Run() {
 
 	assignments := c.Guesses()
 
-	// Print cluster frequencies
+	// Count number of points in each cluster
 	freq := make(map[int]int)
 	for _, clusterID := range assignments {
 		freq[clusterID]++
@@ -135,9 +136,10 @@ func Run() {
 	}
 
 	//Change these to select different features for the plot
-	xIdx := 0 // entertainment spending (euros)
-	yIdx := 1 // gaming hours per week
+	xIdx := 0 
+	yIdx := 1 
 
+	// Output image filename
 	filename := fmt.Sprintf("cluster_%s_vs_%s.png",
 		sanitizeFilename(features[xIdx]),
 		sanitizeFilename(features[yIdx]))
