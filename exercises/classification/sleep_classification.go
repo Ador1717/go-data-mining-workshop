@@ -220,8 +220,7 @@ func Run() {
 		log.Fatal("Error loading CSV:", err)
 	}
 
-	k:=3
-	 // <- change this value for different k and find the best one
+	k:=3// <- change this value for different k and find the best one
 
 	trainX, trainY, testX, testY := trainTestSplit(X, Y, 0.8)
 	predicted := knnPredict(trainX, trainY, testX, k)
@@ -237,12 +236,12 @@ func Run() {
 	printConfusionMatrix(testY, predicted)
 
 	//prediction based on input
-	userInput, err := readUserInput()
-	if err != nil {
-		log.Fatal("Invalid input:", err)
-	}
+	// userInput, err := readUserInput()
+	// if err != nil {
+	// 	log.Fatal("Invalid input:", err)
+	// }
 
 	//// knnPredict expects a slice of test points, so wrap userInput in a slice
-	userPred := knnPredict(trainX, trainY, [][]float64{userInput}, k)
-	fmt.Printf("\nPrediction for your input: %s\n", userPred[0])
+	// userPred := knnPredict(trainX, trainY, [][]float64{userInput}, k)
+	// fmt.Printf("\nPrediction for your input: %s\n", userPred[0])
 }

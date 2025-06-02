@@ -141,13 +141,19 @@ func performRegression(csvFilePath string, featureCol CSVColumn, targetCol CSVCo
 
 	outputDir := "exercises/regression"
 	os.MkdirAll(outputDir, os.ModePerm)
-	
+
 	safeFeatureName := strings.ToLower(strings.ReplaceAll(featureName, " ", "_"))
 	safeTargetName := strings.ToLower(strings.ReplaceAll(targetName, " ", "_"))
 	plotFileName := fmt.Sprintf("%s_vs_%s_regression.png", safeFeatureName, safeTargetName)
 	fullPlotPath := filepath.Join(outputDir, plotFileName)
 
 	createPlot(featureX, targetY, slope, intercept, r2, featureName, targetName, fullPlotPath)
+
+	// Uncomment the lines below to make a prediction using the regression model
+	// testValue := 75.0 // Example: input value for feature (e.g., size in sqm)
+	// predicted := predict(testValue, slope, intercept)
+	// fmt.Printf("\nPrediction:\n")
+	// fmt.Printf("  Given %s = %.2f, predicted %s = %.2f\n", featureName, testValue, targetName, predicted)
 }
 
 func createPlot(X, Y []float64, slope, intercept, r2 float64, featureName string, targetName string, outputPath string) {
@@ -187,18 +193,22 @@ func createPlot(X, Y []float64, slope, intercept, r2 float64, featureName string
 	}
 }
 
+func predict(featureValue, slope, intercept float64) float64 {
+	return slope*featureValue + intercept
+}
+
 func Run() {
 	fmt.Println("Housing Data Regression Analysis")
 	fmt.Println("================================")
-	
+
 	csvFilePath := "datasets/housing_prices.csv"
-	
+
 	// Dynamic example: Number of rooms vs Floor level
-	var featureCol CSVColumn = DistanceToCenterKM
+	var featureCol CSVColumn = SizeSQM
 	var targetCol CSVColumn = PriceEUR
-	
+
 	performRegression(csvFilePath, featureCol, targetCol)
-	
+
 	fmt.Println("\nRegression analysis complete!")
 	fmt.Println("Check 'exercises/regression/' for the generated plot.")
-} 
+}
